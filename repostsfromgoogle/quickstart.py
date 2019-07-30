@@ -1,5 +1,5 @@
 from __future__ import print_function
-import pickle, os.path, datetime, re, requests, time
+import pickle, os, datetime, re, requests, time, tempfile
 import post, post_vk, post_fb, post_tg
 from dotenv import load_dotenv
 from googleapiclient.discovery import build
@@ -32,21 +32,18 @@ def get_id(text):
     return re.findall(r'id=.[^"]+',text)[0][3:]
 
 
-def get_article(id, drive):
+def get_article(id, drive, tmpdirname):
     mimetype = 'text/plain'
-
     file = drive.CreateFile({'id': id})
-
-    title = '{}.{}'.format(file['title'], 'txt')
+    title = os.path.join(tmpdirname, '{}.{}'.format(file['title'], 'txt'))
     file.GetContentFile(title, mimetype=mimetype)
     return title
 
 
-def get_image(id, drive):
+def get_image(id, drive, tmpdirname):
     file = drive.CreateFile({'id': id})
-    title = file['title']
-
-    file.GetContentFile(title) # Download file as 'catlove.png'.
+    title = os.path.join(tmpdirname, file['title'])
+    file.GetContentFile(title)
     return title
 
 
@@ -80,41 +77,41 @@ def publish_articles(last_attempt_timestamp):
     gauth.LocalWebserverAuth()
     drive = GoogleDrive(gauth)
 
-    for row in values:
-        if str(row[7]).upper() == 'ДА':
-            continue
+    with tempfile.TemporaryDirectory() as tmpdirname:
+        for row in values:
+            if str(row[7]).upper() == 'ДА':
+                continue
 
-        post_weekday = weekdays.get(row[3], None)
-        today_weekday = datetime.date.today().weekday()
-        if post_weekday is None or post_weekday !=  today_weekday:
-            continue
+            post_weekday = weekdays.get(row[3], None)
+            today_weekday = datetime.date.today().weekday()
+            if post_weekday is None or post_weekday !=  today_weekday:
+                continue
 
-        post_hour = row[4]
-        if not float(post_hour).is_integer():
-            continue
+            post_hour = row[4]
+            if not float(post_hour).is_integer():
+                continue
 
-        now = datetime.datetime.now()
-        post_datetime = datetime.datetime(year=now.year, month=now.month, day=now.day, hour=int(post_hour)).timestamp()
-        if post_datetime <=  last_attempt_timestamp or post_datetime >= now.timestamp():
-            continue
+            now = datetime.datetime.now()
+            post_datetime = datetime.datetime(year=now.year, month=now.month, day=now.day, hour=int(post_hour)).timestamp()
+            if post_datetime <=  last_attempt_timestamp or post_datetime >= now.timestamp():
+                continue
 
-        text_filepath = get_article(get_id(row[5]), drive)
-        image_filepath = get_image(get_id(row[6]), drive)
-        social_networks = ''
-        if str(row[0]).upper() == 'ДА':
-            social_networks += 'vk,'
+            social_networks = ''
+            if str(row[0]).upper() == 'ДА':
+                social_networks += 'vk,'
 
-        if str(row[1]).upper() == 'ДА':
-            social_networks += 'tg,'
+            if str(row[1]).upper() == 'ДА':
+                social_networks += 'tg,'
 
-        if str(row[2]).upper() == 'ДА':
-            social_networks += 'fb'
+            if str(row[2]).upper() == 'ДА':
+                social_networks += 'fb'
 
-        post.post_to_social_networks(social_networks, image_filepath, text_filepath)
-        row[7] = 'да'
+            text_filepath = get_article(get_id(row[5]), drive, tmpdirname)
+            image_filepath = get_image(get_id(row[6]), drive, tmpdirname)
 
-        os.remove(text_filepath)
-        os.remove(image_filepath)
+            post.post_to_social_networks(social_networks, image_filepath, text_filepath)
+            row[7] = 'да'
+
 
     body = {
         'values': values
@@ -125,11 +122,11 @@ def publish_articles(last_attempt_timestamp):
         valueInputOption=value_input_option, body=body).execute()
 
 
-def main():
+def repost_from_google():
     load_dotenv()
     last_attempt_timestamp = (datetime.datetime.now()- datetime.timedelta(hours=1)).timestamp()
 
-    for i in range(1):
+    while True:
         try:
             publish_articles(last_attempt_timestamp)
 
@@ -149,9 +146,12 @@ def main():
 
         last_attempt_timestamp = datetime.datetime.now().timestamp()
 
+        if __name__ == "__main__":
+            break
+
         time.sleep(1800)
 
 
 if __name__ == '__main__':
-    main()
+    repost_from_google()
 
